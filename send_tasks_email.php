@@ -63,8 +63,22 @@ function respond_json($ok, $message, $extra = []) {
     exit;
 }
 
-// Pull today's tasks: not done and deadline == today
-$stmt = $mysqli->prepare('SELECT id, title, deadline, notes, is_done FROM tasks WHERE user_id = ? AND is_done = 0 AND deadline = CURDATE() ORDER BY deadline ASC');
+// Pull all incomplete tasks (including those without deadlines)
+// Priority: overdue > today > no deadline > future
+$stmt = $mysqli->prepare('
+    SELECT id, title, deadline, notes, is_done 
+    FROM tasks 
+    WHERE user_id = ? 
+      AND is_done = 0
+    ORDER BY 
+      CASE 
+        WHEN deadline IS NULL THEN 3
+        WHEN deadline < CURDATE() THEN 1
+        WHEN deadline = CURDATE() THEN 2
+        ELSE 4
+      END,
+      deadline ASC
+');
 $stmt->bind_param('i', $userId);
 $stmt->execute();
 $res = $stmt->get_result();
@@ -72,7 +86,7 @@ $tasks = $res->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
 if (empty($tasks)) {
-    $output = "No tasks for today (user_id={$userId}).";
+    $output = "No incomplete tasks found (user_id={$userId}).";
     if ($ajax) {
         respond_json(true, $output, ['sent' => false, 'count' => 0]);
     }
@@ -83,12 +97,70 @@ if (empty($tasks)) {
 $todayLabel = date('M j, Y');
 $taskCount = count($tasks);
 
+// Count overdue vs today vs no deadline vs future
+$overdueCount = 0;
+$todayCount = 0;
+$noDeadlineCount = 0;
+$futureCount = 0;
+$today = date('Y-m-d');
+
+foreach ($tasks as $t) {
+    if ($t['deadline'] === null) {
+        $noDeadlineCount++;
+    } elseif ($t['deadline'] < $today) {
+        $overdueCount++;
+    } elseif ($t['deadline'] === $today) {
+        $todayCount++;
+    } else {
+        $futureCount++;
+    }
+}
+
 // Build colorful HTML email + plain fallback
-$plain = "Today's tasks ({$todayLabel}) for user id={$userId}\n\n";
+$plain = "Your Tasks ({$todayLabel}) for user id={$userId}\n";
+if ($overdueCount > 0) {
+    $plain .= "⚠️ {$overdueCount} overdue task(s)\n";
+}
+if ($todayCount > 0) {
+    $plain .= "📅 {$todayCount} task(s) due today\n";
+}
+if ($noDeadlineCount > 0) {
+    $plain .= "📋 {$noDeadlineCount} task(s) without deadline\n";
+}
+if ($futureCount > 0) {
+    $plain .= "🔜 {$futureCount} upcoming task(s)\n";
+}
+$plain .= "\n";
 
 $taskItemsHtml = '';
 foreach ($tasks as $t) {
-    $plain .= "- " . $t['title'] . " (deadline: " . ($t['deadline'] ?: 'none') . ")\n";
+    $isOverdue = !empty($t['deadline']) && $t['deadline'] < $today;
+    $isToday = !empty($t['deadline']) && $t['deadline'] === $today;
+    $noDeadline = empty($t['deadline']);
+    
+    if ($isOverdue) {
+        $statusLabel = '⚠️ OVERDUE';
+        $borderColor = 'rgba(239, 68, 68, 0.4)';
+        $statusBadgeColor = '#ef4444';
+        $statusText = 'OVERDUE';
+    } elseif ($isToday) {
+        $statusLabel = '📅 DUE TODAY';
+        $borderColor = 'rgba(251, 191, 36, 0.4)';
+        $statusBadgeColor = '#f59e0b';
+        $statusText = 'DUE TODAY';
+    } elseif ($noDeadline) {
+        $statusLabel = '📋 NO DEADLINE';
+        $borderColor = 'rgba(148, 163, 184, 0.3)';
+        $statusBadgeColor = '#64748b';
+        $statusText = 'NO DEADLINE';
+    } else {
+        $statusLabel = '🔜 UPCOMING';
+        $borderColor = 'rgba(59, 130, 246, 0.3)';
+        $statusBadgeColor = '#3b82f6';
+        $statusText = 'UPCOMING';
+    }
+    
+    $plain .= "- " . $statusLabel . " " . $t['title'] . " (deadline: " . ($t['deadline'] ?: 'none') . ")\n";
     if (!empty($t['notes'])) {
         $plain .= "  notes: " . str_replace(["\r\n", "\r"], "\n", $t['notes']) . "\n";
     }
@@ -96,6 +168,7 @@ foreach ($tasks as $t) {
     $avatar = strtoupper(substr($t['title'], 0, 1));
     $deadline = htmlspecialchars($t['deadline'] ?: 'No deadline');
     $title = htmlspecialchars($t['title']);
+    
     $notesHtml = '';
     if (!empty($t['notes'])) {
         $notesHtml = '<div style="margin-top:10px;padding:12px;border-radius:12px;background:rgba(92,108,255,0.08);color:#0f172a;font-size:13px;line-height:1.6;border:1px solid rgba(92,108,255,0.18);">'
@@ -106,13 +179,14 @@ foreach ($tasks as $t) {
     // using table-based markup per item (more compatible with email clients)
     $taskItemsHtml .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;border-collapse:separate;border-spacing:0;">'
         . '<tr>'
-        . '<td style="padding:12px;border-radius:12px;border:1px solid rgba(15,23,42,0.06);background:#ffffff;box-shadow:0 6px 18px rgba(15,23,42,0.04);">'
+        . '<td style="padding:12px;border-radius:12px;border:2px solid ' . $borderColor . ';background:#ffffff;box-shadow:0 6px 18px rgba(15,23,42,0.04);">'
         . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
             . '<tr>'
                 . '<td width="56" valign="top" style="padding-right:12px;">'
                     . '<div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#5c6cff,#ff8fb1);text-align:center;color:#fff;font-weight:800;font-size:16px;line-height:40px;">' . $avatar . '</div>'
                 . '</td>'
                 . '<td valign="top" style="vertical-align:top;">'
+                    . '<div style="display:inline-block;padding:2px 8px;background:' . $statusBadgeColor . ';color:#fff;border-radius:4px;font-size:10px;font-weight:700;margin-bottom:6px;">' . $statusText . '</div>'
                     . '<div style="font-size:15px;font-weight:800;color:#0f172a;">' . $title . '</div>'
                     . '<div style="font-size:12px;color:#64748b;margin-top:6px;">Due ' . $deadline . '</div>'
                     . $notesHtml
@@ -156,7 +230,7 @@ $html = <<<HTML
                                             <td style="text-align:right;vertical-align:middle;font-size:13px;color:#e2e8f0;padding-left:8px;">{$todayLabel}</td>
                                         </tr>
                                     </table>
-                                    <div style="color:#dbeafe;font-size:13px;margin-top:8px;">You have <strong>{$taskCount}</strong> task(s) lined up today.</div>
+                                    <div style="color:#dbeafe;font-size:13px;margin-top:8px;">You have <strong>{$taskCount}</strong> urgent task(s). {$overdueCount} overdue, {$todayCount} due today.</div>
                                 </td>
                             </tr>
                         </table>
