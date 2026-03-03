@@ -1,0 +1,132 @@
+<?php
+require_once 'db.php';
+require_once 'auth.php';
+
+$error = '';
+$success = '';
+$username = '';
+
+if (is_logged_in()) {
+    header('Location: todo.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = trim($_POST['username'] ?? '');
+    $password = trim($_POST['password'] ?? '');
+    $confirm  = trim($_POST['confirm'] ?? '');
+
+    if ($username === '' || $password === '' || $confirm === '') {
+        $error = 'All fields are required.';
+    } elseif ($password !== $confirm) {
+        $error = 'Password confirmation does not match.';
+    } else {
+        // check if username exists
+        $stmt = $mysqli->prepare('SELECT id FROM users WHERE username = ?');
+        $stmt->bind_param('s', $username);
+        $stmt->execute();
+        $stmt->store_result();
+        if ($stmt->num_rows > 0) {
+            $error = 'Username already taken.';
+        } else {
+            $stmt->close();
+            // insert user
+            $stmt = $mysqli->prepare('INSERT INTO users (username, password) VALUES (?, ?)');
+            $stmt->bind_param('ss', $username, $password);
+            if ($stmt->execute()) {
+                $user_id = $stmt->insert_id;
+                $stmt->close();
+                // create default "None" category for this user
+                $name = 'None';
+                $is_default = 1;
+                $stmt2 = $mysqli->prepare('INSERT INTO categories (user_id, name, is_default) VALUES (?, ?, ?)');
+                $stmt2->bind_param('isi', $user_id, $name, $is_default);
+                $stmt2->execute();
+                $stmt2->close();
+
+                $success = 'Registration successful. You can now login.';
+            } else {
+                $error = 'Failed to register user.';
+            }
+        }
+        $stmt->close();
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scheduler Todo List - Register</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <script src="assets/script.js" defer></script>
+</head>
+
+<body class="auth-body">
+    <main class="auth-shell reverse">
+        <section class="auth-intro">
+            <p class="eyebrow">Craft Your Momentum</p>
+            <h1>Join Scheduler Todo Studio</h1>
+            <p class="intro-copy">
+                Unlock a meticulous workspace for categorizing projects, tracking deadlines, and
+                monitoring progress through a dashboard crafted for clarity.
+            </p>
+            <ul class="feature-list">
+                <li>🧩 Smart categories with instant rename &amp; delete controls</li>
+                <li>📊 Live stats that highlight focus, wins, and overdue work</li>
+                <li>🛡️ Session-aware design &amp; graceful error handling</li>
+            </ul>
+        </section>
+
+        <section class="auth-panel">
+            <div class="glass-card">
+                <div class="card-heading">
+                    <h2>Create Your Account</h2>
+                    <p>Only takes a minute to prepare the perfect canvas.</p>
+                </div>
+                <?php if ($error): ?>
+                <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
+                <?php endif; ?>
+                <?php if ($success): ?>
+                <div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div>
+                <?php endif; ?>
+                <form method="post" class="stack-form">
+                    <div class="input-group">
+                        <label for="username">Username</label>
+                        <input id="username" type="text" name="username"
+                            value="<?php echo htmlspecialchars($username); ?>" autocomplete="username" required>
+                    </div>
+                    <div class="input-group input-password">
+                        <label for="password">Password</label>
+                        <div class="input-with-action">
+                            <input id="password" type="password" name="password" autocomplete="new-password" required
+                                data-password-field>
+                            <button type="button" class="btn-ghost" data-toggle-password aria-pressed="false">
+                                Show
+                            </button>
+                        </div>
+                    </div>
+                    <div class="input-group input-password">
+                        <label for="confirm">Confirm Password</label>
+                        <div class="input-with-action">
+                            <input id="confirm" type="password" name="confirm" autocomplete="new-password" required
+                                data-password-field>
+                            <button type="button" class="btn-ghost" data-toggle-password aria-pressed="false">
+                                Show
+                            </button>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-primary full-width">Register</button>
+                </form>
+
+                <p class="auth-hint">
+                    Already part of the us? <a href="index.php">Return to login</a>.
+                </p>
+            </div>
+        </section>
+    </main>
+</body>
+
+</html>
