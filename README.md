@@ -8,6 +8,8 @@
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-orange)](https://www.mysql.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+[![Visit Web App](https://img.shields.io/badge/demo-live_preview-blue?style=for-the-badge&logo=google-chrome)](https://task-scheduler-pro.infinityfreeapp.com/index.php)
+
 ## Table of Contents
 1. [Project Overview](#project-overview)
 2. [Key Features](#key-features)
