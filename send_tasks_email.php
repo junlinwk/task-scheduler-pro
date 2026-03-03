@@ -218,8 +218,7 @@ $html = <<<HTML
                                             <td style="vertical-align:middle;">
                                                 <table role="presentation" cellpadding="0" cellspacing="0">
                                                     <tr>
-                                                        <td style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#5c6cff,#ff8fb1);text-align:center;color:white;font-weight:800;font-size:18px;">✔</td>
-                                                        <td style="width:10px;"></td>
+                                                        <td style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#5c6cff,#ff8fb1);text-align:center;color:white;font-weight:800;font-size:18px;">&#x2714;</td>
                                                         <td style="vertical-align:middle;">
                                                             <div style="font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:#cbd5e1;font-weight:700;">Daily Notification</div>
                                                             <div style="font-size:20px;font-weight:800;line-height:1.1;margin-top:4px;">Today's Tasks</div>
