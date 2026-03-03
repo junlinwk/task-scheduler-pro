@@ -1,6 +1,6 @@
 # Scheduler - Task Management Application
 
-**Language / 語言:** [English](README_Eng.md) | [繁體中文](README.md)
+**Language / 語言:** [English](README.md) | [繁體中文](README_ZH.md)
 
 > A feature-rich task scheduler with Google OAuth, email notifications, Spotlight-style quick search, and real-time statistics dashboard. Built with PHP & MySQL.
 
