@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ## Visit the Web App
-[![Visit Web App](https://img.shields.io/badge/demo-live_preview-blue?style=for-the-badge&logo=google-chrome)](https://task-scheduler-pro.infinityfreeapp.com/index.php)
+[![Visit Web App](https://img.shields.io/badge/Visit_Web_App-yellow?style=for-the-badge&logo=google-chrome)](https://task-scheduler-pro.infinityfreeapp.com/index.php)
 
 ## Table of Contents
 1. [Project Overview](#project-overview)
