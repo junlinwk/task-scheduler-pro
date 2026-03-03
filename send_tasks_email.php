@@ -119,13 +119,13 @@ foreach ($tasks as $t) {
 // Build colorful HTML email + plain fallback
 $plain = "Your Tasks ({$todayLabel}) for user id={$userId}\n";
 if ($overdueCount > 0) {
-    $plain .= "⚠️ {$overdueCount} overdue task(s)\n";
+    $plain .= "{$overdueCount} overdue task(s)\n";
 }
 if ($todayCount > 0) {
-    $plain .= "📅 {$todayCount} task(s) due today\n";
+    $plain .= "{$todayCount} task(s) due today\n";
 }
 if ($noDeadlineCount > 0) {
-    $plain .= "📋 {$noDeadlineCount} task(s) without deadline\n";
+    $plain .= "{$noDeadlineCount} task(s) without deadline\n";
 }
 if ($futureCount > 0) {
     $plain .= "🔜 {$futureCount} upcoming task(s)\n";
@@ -139,17 +139,17 @@ foreach ($tasks as $t) {
     $noDeadline = empty($t['deadline']);
     
     if ($isOverdue) {
-        $statusLabel = '⚠️ OVERDUE';
+        $statusLabel = 'OVERDUE';
         $borderColor = 'rgba(239, 68, 68, 0.4)';
         $statusBadgeColor = '#ef4444';
         $statusText = 'OVERDUE';
     } elseif ($isToday) {
-        $statusLabel = '📅 DUE TODAY';
+        $statusLabel = 'DUE TODAY';
         $borderColor = 'rgba(251, 191, 36, 0.4)';
         $statusBadgeColor = '#f59e0b';
         $statusText = 'DUE TODAY';
     } elseif ($noDeadline) {
-        $statusLabel = '📋 NO DEADLINE';
+        $statusLabel = 'NO DEADLINE';
         $borderColor = 'rgba(148, 163, 184, 0.3)';
         $statusBadgeColor = '#64748b';
         $statusText = 'NO DEADLINE';
@@ -222,7 +222,7 @@ $html = <<<HTML
                                                         <td style="width:10px;"></td>
                                                         <td style="vertical-align:middle;">
                                                             <div style="font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:#cbd5e1;font-weight:700;">Daily Notification</div>
-                                                            <div style="font-size:20px;font-weight:800;line-height:1.1;margin-top:4px;">Today’s Tasks</div>
+                                                            <div style="font-size:20px;font-weight:800;line-height:1.1;margin-top:4px;">Today's Tasks</div>
                                                         </td>
                                                     </tr>
                                                 </table>
@@ -244,7 +244,7 @@ $html = <<<HTML
                                     <td width="18" valign="middle" style="padding-right:8px;vertical-align:middle;">
                                         <div style="width:12px;height:12px;border-radius:50%;background:linear-gradient(135deg,#5c6cff,#ff8fb1);"></div>
                                     </td>
-                                    <td style="vertical-align:middle;font-weight:800;font-size:14px;color:#0f172a;">Today’s line-up</td>
+                                    <td style="vertical-align:middle;font-weight:800;font-size:14px;color:#0f172a;">Today's line-up</td>
                                 </tr>
                             </table>
                             {$taskItemsHtml}
