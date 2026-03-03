@@ -8,7 +8,7 @@
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-orange)](https://www.mysql.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## 立即前往
+## 立即前往網頁
 [![Visit Web App](https://img.shields.io/badge/點擊造訪網頁-orange?style=for-the-badge&logo=google-chrome)](https://task-scheduler-pro.infinityfreeapp.com/index.php)
 ## 目錄
 1. [專案概述](#專案概述)
