@@ -4,15 +4,28 @@ require_once 'auth.php';
 require_once 'google_auth.php';
 
 if (isset($_GET['code'])) {
-    $token_data = get_google_token($_GET['code']);
+    $receivedState = $_GET['state'] ?? '';
+    $expectedState = $_SESSION['google_oauth_state'] ?? '';
+    unset($_SESSION['google_oauth_state']);
+
+    if (!is_string($receivedState) || $receivedState === '' || !hash_equals((string)$expectedState, $receivedState)) {
+        http_response_code(400);
+        die('Invalid OAuth state.');
+    }
+
+    $token_data = get_google_token((string)$_GET['code']);
 
     if (isset($token_data['access_token'])) {
         $user_info = get_google_user_info($token_data['access_token']);
 
         if (isset($user_info['sub'])) { // 'sub' is the unique Google ID
             $google_id = $user_info['sub'];
-            $email = $user_info['email'];
-            $name = $user_info['name']; // or 'given_name'
+            $email = sanitize_single_line($user_info['email'] ?? '', 255);
+
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                http_response_code(400);
+                die('Invalid email returned from Google.');
+            }
 
             // 1. Check if user exists with this google_id
             $stmt = $mysqli->prepare('SELECT id, username FROM users WHERE google_id = ?');
@@ -22,8 +35,7 @@ if (isset($_GET['code'])) {
 
             if ($stmt->fetch()) {
                 // User exists, log them in
-                $_SESSION['user_id'] = $uid;
-                $_SESSION['username'] = $uname;
+                login_user($uid, $uname);
                 $stmt->close();
                 header('Location: todo.php');
                 exit;
@@ -45,8 +57,7 @@ if (isset($_GET['code'])) {
                 $stmt->execute();
                 $stmt->close();
 
-                $_SESSION['user_id'] = $uid;
-                $_SESSION['username'] = $email;
+                login_user($uid, $email);
                 header('Location: todo.php');
                 exit;
             }
@@ -69,19 +80,22 @@ if (isset($_GET['code'])) {
                 $stmt2->execute();
                 $stmt2->close();
 
-                $_SESSION['user_id'] = $new_uid;
-                $_SESSION['username'] = $email;
+                login_user($new_uid, $email);
                 header('Location: todo.php');
                 exit;
             } else {
-                die('Error creating user: ' . $mysqli->error);
+                error_log('Error creating user in google_callback.php: ' . $mysqli->error);
+                http_response_code(500);
+                die('Unable to create user.');
             }
 
         } else {
             die('Could not retrieve user info from Google.');
         }
     } else {
-        die('Could not retrieve access token. Debug: ' . print_r($token_data, true));
+        error_log('Could not retrieve access token from Google: ' . json_encode($token_data));
+        http_response_code(400);
+        die('Could not retrieve access token.');
     }
 } else {
     // No code returned, redirect back to login

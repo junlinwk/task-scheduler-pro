@@ -1,4 +1,22 @@
 let overlayLockCount = 0;
+const CSRF_TOKEN = document.body?.dataset?.csrfToken || '';
+
+function attachCsrfToken(payload) {
+    if (!CSRF_TOKEN || !payload) return payload;
+    if (payload instanceof FormData) {
+        if (!payload.has('csrf_token')) {
+            payload.append('csrf_token', CSRF_TOKEN);
+        }
+        return payload;
+    }
+    if (payload instanceof URLSearchParams) {
+        if (!payload.has('csrf_token')) {
+            payload.set('csrf_token', CSRF_TOKEN);
+        }
+        return payload;
+    }
+    return payload;
+}
 
 function lockBodyScroll() {
     overlayLockCount += 1;
@@ -258,6 +276,7 @@ function initSettingsOverlay() {
             formData.append('user_id', SETTINGS_USER_ID);
             formData.append('topic', topic);
             formData.append('ajax', '1');
+            attachCsrfToken(formData);
             const response = await fetch('send_tasks_email.php', {
                 method: 'POST',
                 body: formData,
@@ -1104,6 +1123,11 @@ function initStatOverlay() {
             ajaxInput.name = 'ajax';
             ajaxInput.value = '1';
 
+            const csrfInput = document.createElement('input');
+            csrfInput.type = 'hidden';
+            csrfInput.name = 'csrf_token';
+            csrfInput.value = CSRF_TOKEN;
+
             const label = document.createElement('label');
             label.className = 'input-group';
 
@@ -1140,6 +1164,7 @@ function initStatOverlay() {
             form.appendChild(actionInput);
             form.appendChild(taskInput);
             form.appendChild(ajaxInput);
+            form.appendChild(csrfInput);
             form.appendChild(label);
             form.appendChild(actions);
 
@@ -1484,6 +1509,7 @@ function initTaskCheckboxes() {
 
             const formData = new FormData(form);
             formData.set('is_done', newCheckedState ? '1' : '0');
+            attachCsrfToken(formData);
             try {
                 const response = await fetch(form.action || 'todo.php', {
                     method: 'POST',
@@ -1528,6 +1554,7 @@ function initTaskCheckboxes() {
                 formData.append('action', 'toggle_done');
                 formData.append('task_id', taskId);
                 formData.append('is_done', newCheckedState ? '1' : '0');
+                attachCsrfToken(formData);
 
                 const response = await fetch('todo.php', {
                     method: 'POST',
@@ -1765,6 +1792,7 @@ function initTaskNotesOverlay() {
 }
 async function submitTaskNotesForm(form) {
     const formData = new FormData(form);
+    attachCsrfToken(formData);
     const actionAttr = typeof form.getAttribute === 'function' ? form.getAttribute('action') : null;
     const targetUrl = actionAttr && actionAttr.trim() !== '' ? actionAttr : 'todo.php';
     const response = await fetch(targetUrl, {
@@ -2726,6 +2754,7 @@ function initSpotlightOverlay() {
             payload.set('title', title);
             payload.set('deadline', '');
             payload.set('category_id', '0');
+            attachCsrfToken(payload);
             const response = await fetch('todo.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

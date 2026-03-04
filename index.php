@@ -8,6 +8,8 @@ $google_login_url = 'google_login.php';
 $error = '';
 $success = '';
 $username_val = '';
+$action = 'login';
+$csrf_token = csrf_token();
 
 if (is_logged_in()) {
     header('Location: todo.php');
@@ -15,15 +17,26 @@ if (is_logged_in()) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? 'login';
-    $username_val = trim($_POST['username'] ?? '');
-    $password = trim($_POST['password'] ?? '');
+    if (!is_valid_csrf_token($_POST['csrf_token'] ?? '')) {
+        $error = 'Invalid request token. Please refresh and try again.';
+    }
 
-    if ($action === 'login') {
+    $action = $_POST['action'] ?? 'login';
+    $username_val = sanitize_single_line($_POST['username'] ?? '', 255);
+    $password = (string)($_POST['password'] ?? '');
+
+    if ($error === '' && $action === 'login') {
         // --- LOGIN LOGIC ---
-        if ($username_val === '' || $password === '') {
+        if (rate_limit_is_blocked('login_attempts', 8, 300)) {
+            $retryAfter = rate_limit_retry_after('login_attempts', 300);
+            $error = 'Too many login attempts. Try again in ' . max($retryAfter, 1) . ' seconds.';
+        }
+
+        if ($error === '' && ($username_val === '' || $password === '')) {
             $error = 'Please enter both username and password.';
-        } else {
+        }
+
+        if ($error === '') {
             $stmt = $mysqli->prepare('SELECT id, username, password FROM users WHERE username = ?');
             $stmt->bind_param('s', $username_val);
             $stmt->execute();
@@ -32,25 +45,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Check if password is NULL (Google user trying to login with password)
                 if ($pw === null) {
                     $error = 'Please log in with Google.';
-                } elseif ($password === $pw) {
-                    $_SESSION['user_id'] = $uid;
-                    $_SESSION['username'] = $uname;
-                    header('Location: todo.php');
-                    exit;
                 } else {
+                    $isPasswordValid = false;
+                    if (is_string($pw) && password_get_info($pw)['algo'] !== 0) {
+                        $isPasswordValid = password_verify($password, $pw);
+                        if ($isPasswordValid && password_needs_rehash($pw, PASSWORD_DEFAULT)) {
+                            $newHash = password_hash($password, PASSWORD_DEFAULT);
+                            $rehashStmt = $mysqli->prepare('UPDATE users SET password = ? WHERE id = ?');
+                            if ($rehashStmt) {
+                                $rehashStmt->bind_param('si', $newHash, $uid);
+                                $rehashStmt->execute();
+                                $rehashStmt->close();
+                            }
+                        }
+                    } else {
+                        // Legacy plaintext password compatibility; auto-upgrade on successful login.
+                        $isPasswordValid = hash_equals((string)$pw, $password);
+                        if ($isPasswordValid) {
+                            $newHash = password_hash($password, PASSWORD_DEFAULT);
+                            $upgradeStmt = $mysqli->prepare('UPDATE users SET password = ? WHERE id = ?');
+                            if ($upgradeStmt) {
+                                $upgradeStmt->bind_param('si', $newHash, $uid);
+                                $upgradeStmt->execute();
+                                $upgradeStmt->close();
+                            }
+                        }
+                    }
+
+                    if ($isPasswordValid) {
+                        login_user($uid, $uname);
+                        rate_limit_clear('login_attempts');
+                        header('Location: todo.php');
+                        exit;
+                    }
                     $error = 'Incorrect password.';
                 }
             } else {
                 $error = 'User not found.';
             }
             $stmt->close();
+
+            if ($error !== '') {
+                rate_limit_register_hit('login_attempts', 300);
+            }
         }
-    } elseif ($action === 'register') {
+    } elseif ($error === '' && $action === 'register') {
         // --- REGISTER LOGIC ---
-        $confirm = trim($_POST['confirm'] ?? '');
+        $confirm = (string)($_POST['confirm'] ?? '');
 
         if ($username_val === '' || $password === '' || $confirm === '') {
             $error = 'All fields are required.';
+        } elseif (!preg_match('/^[a-zA-Z0-9_.@-]{3,64}$/', $username_val)) {
+            $error = 'Username must be 3-64 chars and only use letters, numbers, ., _, @, -';
+        } elseif (strlen($password) < 8) {
+            $error = 'Password must be at least 8 characters.';
         } elseif ($password !== $confirm) {
             $error = 'Password confirmation does not match.';
         } else {
@@ -61,11 +109,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->store_result();
             if ($stmt->num_rows > 0) {
                 $error = 'Username already taken.';
+                $stmt->close();
             } else {
                 $stmt->close();
-                // Insert user
+                // Insert user with hashed password
+                $passwordHash = password_hash($password, PASSWORD_DEFAULT);
                 $stmt = $mysqli->prepare('INSERT INTO users (username, password) VALUES (?, ?)');
-                $stmt->bind_param('ss', $username_val, $password);
+                $stmt->bind_param('ss', $username_val, $passwordHash);
                 if ($stmt->execute()) {
                     $user_id = $stmt->insert_id;
                     $stmt->close();
@@ -73,19 +123,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Create default category
                     $name = 'None';
                     $is_default = 1;
-                    $stmt2 = $mysqli->prepare('INSERT INTO categories (user_id, name, is_default) VALUES (?, ?, ?)');
-                    $stmt2->bind_param('isi', $user_id, $name, $is_default);
+                    $defaultColor = '#94A3B8';
+                    $stmt2 = $mysqli->prepare('INSERT INTO categories (user_id, name, is_default, color) VALUES (?, ?, ?, ?)');
+                    $stmt2->bind_param('isis', $user_id, $name, $is_default, $defaultColor);
                     $stmt2->execute();
                     $stmt2->close();
 
                     $success = 'Registration successful! Please log in.';
-                    // Switch back to login mode visually (handled by JS if possible, or just show success)
+                    $action = 'login';
+                    $username_val = '';
                 } else {
                     $error = 'Failed to register user.';
+                    $stmt->close();
                 }
             }
-            if (isset($stmt))
-                $stmt->close();
         }
     }
 }
@@ -142,18 +193,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
 
                 <?php if ($error && $action === 'login'): ?>
-                <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
+                <div class="alert alert-error"><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></div>
                 <?php endif; ?>
                 <?php if ($success): ?>
-                <div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div>
+                <div class="alert alert-success"><?php echo htmlspecialchars($success, ENT_QUOTES, 'UTF-8'); ?></div>
                 <?php endif; ?>
 
                 <form method="post">
                     <input type="hidden" name="action" value="login">
+                    <input type="hidden" name="csrf_token"
+                        value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                     <div class="input-group">
                         <label>Username</label>
                         <input type="text" name="username" required
-                            value="<?php echo htmlspecialchars($username_val); ?>">
+                            value="<?php echo htmlspecialchars($username_val, ENT_QUOTES, 'UTF-8'); ?>">
                     </div>
                     <div class="input-group">
                         <label>Password</label>
@@ -167,7 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div class="divider"><span>OR</span></div>
 
-                    <a href="<?php echo $google_login_url; ?>" class="btn-google">
+                    <a href="<?php echo htmlspecialchars($google_login_url, ENT_QUOTES, 'UTF-8'); ?>" class="btn-google">
                         <img src="https://www.google.com/favicon.ico" alt="Google" width="20">
                         Continue with Google
                     </a>
@@ -185,15 +238,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
 
                 <?php if ($error && $action === 'register'): ?>
-                <div class="alert alert-error"><?php echo htmlspecialchars($error); ?></div>
+                <div class="alert alert-error"><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></div>
                 <?php endif; ?>
 
                 <form method="post">
                     <input type="hidden" name="action" value="register">
+                    <input type="hidden" name="csrf_token"
+                        value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                     <div class="input-group">
                         <label>Username</label>
                         <input type="text" name="username" required
-                            value="<?php echo htmlspecialchars($username_val); ?>">
+                            value="<?php echo htmlspecialchars($username_val, ENT_QUOTES, 'UTF-8'); ?>">
                     </div>
                     <div class="input-group">
                         <label>Password</label>
@@ -214,7 +269,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     <div class="divider"><span>OR</span></div>
 
-                    <a href="<?php echo $google_login_url; ?>" class="btn-google">
+                    <a href="<?php echo htmlspecialchars($google_login_url, ENT_QUOTES, 'UTF-8'); ?>" class="btn-google">
                         <img src="https://www.google.com/favicon.ico" alt="Google" width="20">
                         Sign up with Google
                     </a>

@@ -13,7 +13,6 @@ Thumbs.db
 *.pem
 
 # Dependencies
-vendor/
 
 # Local VS Code settings
 .vscode/

@@ -4,6 +4,7 @@ require_once 'auth.php';
 require_login();
 
 $user_id = current_user_id();
+$csrf_token = csrf_token();
 $message = '';
 $today = new DateTime('today');
 $today_key = $today->format('Y-m-d');
@@ -47,6 +48,33 @@ if (!function_exists('escape_data_value')) {
     function escape_data_value($value) {
         $safe = htmlspecialchars($value ?? '', ENT_QUOTES, 'UTF-8');
         return str_replace(["\r", "\n"], ['&#13;', '&#10;'], $safe);
+    }
+}
+
+if (!function_exists('normalize_task_title')) {
+    function normalize_task_title($value) {
+        return sanitize_single_line($value, 140);
+    }
+}
+
+if (!function_exists('normalize_category_name')) {
+    function normalize_category_name($value) {
+        return sanitize_single_line($value, 80);
+    }
+}
+
+if (!function_exists('category_belongs_to_user')) {
+    function category_belongs_to_user($mysqli, $user_id, $category_id) {
+        $stmt = $mysqli->prepare('SELECT id FROM categories WHERE id = ? AND user_id = ? LIMIT 1');
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('ii', $category_id, $user_id);
+        $stmt->execute();
+        $stmt->store_result();
+        $exists = $stmt->num_rows > 0;
+        $stmt->close();
+        return $exists;
     }
 }
 
@@ -134,15 +162,32 @@ if (!function_exists('calculate_stats')) {
 
 // Handle actions (add/edit/delete task/category, toggle done)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!is_valid_csrf_token($_POST['csrf_token'] ?? '')) {
+        $prefer_json = is_ajax_request() || isset($_POST['ajax']);
+        http_response_code(400);
+        if ($prefer_json) {
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => false,
+                'error' => 'Invalid request token.',
+            ]);
+            exit;
+        }
+        die('Invalid request token.');
+    }
+
     $action = $_POST['action'] ?? '';
 
     if ($action === 'add_task') {
-        $title = trim($_POST['title'] ?? '');
-        $deadline = $_POST['deadline'] ?? null;
+        $title = normalize_task_title($_POST['title'] ?? '');
+        $deadline = normalize_iso_date($_POST['deadline'] ?? '');
         $category_id = (int)($_POST['category_id'] ?? 0);
         $notes = '';
 
         if ($title !== '') {
+            if ($category_id > 0 && !category_belongs_to_user($mysqli, $user_id, $category_id)) {
+                $category_id = 0;
+            }
             if ($category_id === 0) {
                 $stmt = $mysqli->prepare('SELECT id FROM categories WHERE user_id = ? AND is_default = 1 LIMIT 1');
                 $stmt->bind_param('i', $user_id);
@@ -154,7 +199,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->close();
             }
             $stmt = $mysqli->prepare('INSERT INTO tasks (user_id, category_id, title, deadline, is_done, notes) VALUES (?, ?, ?, ?, 0, ?)');
-            if ($deadline === '') $deadline = null;
             $stmt->bind_param('iisss', $user_id, $category_id, $title, $deadline, $notes);
             $stmt->execute();
             $stmt->close();
@@ -165,7 +209,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'update_task_name') {
         $task_id = (int)($_POST['task_id'] ?? 0);
-        $title = trim($_POST['title'] ?? '');
+        $title = normalize_task_title($_POST['title'] ?? '');
         if ($task_id && $title !== '') {
             $stmt = $mysqli->prepare('UPDATE tasks SET title = ? WHERE id = ? AND user_id = ?');
             $stmt->bind_param('sii', $title, $task_id, $user_id);
@@ -179,7 +223,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'update_task_category') {
         $task_id = (int)($_POST['task_id'] ?? 0);
         $category_id = (int)($_POST['category_id'] ?? 0);
-        if ($task_id && $category_id) {
+        if ($task_id && $category_id && category_belongs_to_user($mysqli, $user_id, $category_id)) {
             $stmt = $mysqli->prepare('UPDATE tasks SET category_id = ? WHERE id = ? AND user_id = ?');
             $stmt->bind_param('iii', $category_id, $task_id, $user_id);
             $stmt->execute();
@@ -191,7 +235,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'update_task_notes') {
         $task_id = (int)($_POST['task_id'] ?? 0);
-        $notes_raw = $_POST['notes'] ?? '';
+        $notes_raw = sanitize_multiline_text($_POST['notes'] ?? '', 5000);
         $notes = trim($notes_raw) === '' ? '' : $notes_raw;
         $notes_error = null;
 
@@ -233,7 +277,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'toggle_done') {
         $task_id = (int)($_POST['task_id'] ?? 0);
-        $is_done = isset($_POST['is_done']) ? 1 : 0;
+        $is_done = ((string)($_POST['is_done'] ?? '') === '1' || (string)($_POST['is_done'] ?? '') === 'on') ? 1 : 0;
         if ($task_id) {
             $stmt = $mysqli->prepare('UPDATE tasks SET is_done = ? WHERE id = ? AND user_id = ?');
             $stmt->bind_param('iii', $is_done, $task_id, $user_id);
@@ -242,7 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         
         // Check if this is an AJAX request
-        if ($_SERVER['HTTP_X_REQUESTED_WITH'] === 'XMLHttpRequest' || strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false) {
+        if ((isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] === 'XMLHttpRequest') || strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false) {
             header('Content-Type: application/json');
             $stats = calculate_stats($mysqli, $user_id);
             echo json_encode($stats);
@@ -266,8 +310,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'add_category') {
-        $name = trim($_POST['name'] ?? '');
-        $color = trim($_POST['color'] ?? '#5C6CFF');
+        $name = normalize_category_name($_POST['name'] ?? '');
+        $color = normalize_hex_color($_POST['color'] ?? '#5C6CFF', '#5C6CFF');
         if ($name !== '') {
             $is_default = 0;
             $stmt = $mysqli->prepare('INSERT INTO categories (user_id, name, is_default, color) VALUES (?, ?, ?, ?)');
@@ -281,7 +325,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'update_category_name') {
         $category_id = (int)($_POST['category_id'] ?? 0);
-        $name = trim($_POST['name'] ?? '');
+        $name = normalize_category_name($_POST['name'] ?? '');
         if ($category_id && $name !== '') {
             // check default
             $stmt = $mysqli->prepare('SELECT is_default FROM categories WHERE id = ? AND user_id = ?');
@@ -304,7 +348,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'update_category_color') {
         $category_id = (int)($_POST['category_id'] ?? 0);
-        $color = trim($_POST['color'] ?? '');
+        $color = normalize_hex_color($_POST['color'] ?? '', '#5C6CFF');
         if ($category_id && $color !== '') {
             $stmt = $mysqli->prepare('SELECT is_default FROM categories WHERE id = ? AND user_id = ?');
             $stmt->bind_param('ii', $category_id, $user_id);
@@ -327,6 +371,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'delete_category') {
         $category_id = (int)($_POST['category_id'] ?? 0);
         $delete_mode = $_POST['delete_mode'] ?? 'delete_all';
+        if ($delete_mode !== 'delete_all' && $delete_mode !== 'detach') {
+            $delete_mode = 'delete_all';
+        }
         if ($category_id) {
             // check default
             $stmt = $mysqli->prepare('SELECT is_default FROM categories WHERE id = ? AND user_id = ?');
@@ -390,7 +437,7 @@ while ($stmt->fetch()) {
         'id' => $cid,
         'name' => format_category_label($cname),
         'is_default' => $is_default,
-        'color' => $ccolor ?: '#5C6CFF',
+        'color' => normalize_hex_color($ccolor ?: '#5C6CFF', '#5C6CFF'),
     ];
 }
 $stmt->close();
@@ -485,7 +532,7 @@ while ($stmt->fetch()) {
         'is_done' => $tdone,
         'category_name' => format_category_label($cname),
         'category_id' => $cid,
-        'category_color' => $ccolor ?: '#5C6CFF',
+        'category_color' => normalize_hex_color($ccolor ?: '#5C6CFF', '#5C6CFF'),
         'deadline_key' => $deadline_key,
         'status_slug' => $status_slug,
         'notes' => $tnotes ?? '',
@@ -587,7 +634,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
     <script src="assets/script.js" defer></script>
 </head>
 
-<body class="app-body" data-user-id="<?php echo htmlspecialchars($user_id, ENT_QUOTES, 'UTF-8'); ?>">
+<body class="app-body" data-user-id="<?php echo htmlspecialchars($user_id, ENT_QUOTES, 'UTF-8'); ?>"
+    data-csrf-token="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
     <header class="app-topbar">
         <div class="brand">
             <h1>TODO Tasks Scheduler</h1>
@@ -612,6 +660,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                 </div>
             </div>
             <form action="logout.php" method="post" class="topbar-logout">
+                <input type="hidden" name="csrf_token"
+                    value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                 <button type="submit" class="btn-logout">Logout</button>
             </form>
         </div>
@@ -705,6 +755,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                     data-task-deadline-relative="<?php echo escape_data_value($deadline_text); ?>">
                                     <form method="post" class="today-toggle" data-preserve-scroll>
                                         <input type="hidden" name="action" value="toggle_done">
+                                        <input type="hidden" name="csrf_token"
+                                            value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                         <input type="hidden" name="task_id" value="<?php echo $task['id']; ?>">
                                         <label class="today-checkbox">
                                             <input type="checkbox" name="is_done"
@@ -811,6 +863,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                 <h3>Add Task</h3>
                                 <form method="post" class="stack-form">
                                     <input type="hidden" name="action" value="add_task">
+                                    <input type="hidden" name="csrf_token"
+                                        value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                     <label class="input-group">
                                         <span>Task name</span>
                                         <input type="text" name="title" placeholder="e.g. Submit Scheduler report" required>
@@ -905,6 +959,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                 <form method="post" class="toggle-form"
                                                     aria-label="Toggle task completion" data-preserve-scroll>
                                                     <input type="hidden" name="action" value="toggle_done">
+                                                    <input type="hidden" name="csrf_token"
+                                                        value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                                     <input type="hidden" name="task_id"
                                                         value="<?php echo $task['id']; ?>">
                                                     <label class="checkbox-pill">
@@ -919,6 +975,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                     <form method="post" class="inline-edit"
                                                         id="<?php echo $edit_form_id; ?>" data-preserve-scroll>
                                                         <input type="hidden" name="action" value="update_task_name">
+                                                        <input type="hidden" name="csrf_token"
+                                                            value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                                         <input type="hidden" name="task_id"
                                                             value="<?php echo $task['id']; ?>">
                                                         <input type="text" name="title"
@@ -927,6 +985,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                     <form method="post" class="inline-form task-category-select"
                                                         data-preserve-scroll>
                                                         <input type="hidden" name="action" value="update_task_category">
+                                                        <input type="hidden" name="csrf_token"
+                                                            value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                                         <input type="hidden" name="task_id"
                                                             value="<?php echo $task['id']; ?>">
                                                         <label class="sr-only"
@@ -964,7 +1024,7 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                         <?php endif; ?>
                                                         <span
                                                             class="chip chip-category <?php echo $is_none ? 'cat-none' : ''; ?>"
-                                                            style="--cat-color: <?php echo $category_color; ?>">
+                                                            style="--cat-color: <?php echo htmlspecialchars($category_color, ENT_QUOTES, 'UTF-8'); ?>;">
                                                             <?php echo htmlspecialchars($category_name); ?>
                                                         </span>
                                                     </div>
@@ -976,6 +1036,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                         data-confirm="Delete this task? This cannot be undone."
                                                         data-preserve-scroll>
                                                         <input type="hidden" name="action" value="delete_task">
+                                                        <input type="hidden" name="csrf_token"
+                                                            value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                                         <input type="hidden" name="task_id"
                                                             value="<?php echo $task['id']; ?>">
                                                         <button type="submit"
@@ -1035,6 +1097,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                 <h3>Add Category</h3>
                                 <form method="post" class="stack-form" id="add-category-form">
                                     <input type="hidden" name="action" value="add_category">
+                                    <input type="hidden" name="csrf_token"
+                                        value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                     <input type="hidden" name="color" id="new-category-color" value="#5C6CFF">
                                     <label class="input-group">
                                         <span>Category name</span>
@@ -1150,6 +1214,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                     <form method="post" class="category-rename"
                                                         id="<?php echo $rename_form_id; ?>" data-preserve-scroll>
                                                         <input type="hidden" name="action" value="update_category_name">
+                                                        <input type="hidden" name="csrf_token"
+                                                            value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                                         <input type="hidden" name="category_id"
                                                             value="<?php echo $cat['id']; ?>">
                                                         <input type="text" name="name"
@@ -1164,7 +1230,7 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                         <div class="category-color-dot"
                                                             data-category-dot="<?php echo $cat['id']; ?>"
                                                             data-current-color="<?php echo htmlspecialchars($cat['color'], ENT_QUOTES, 'UTF-8'); ?>"
-                                                            style="background-color: <?php echo $cat['color']; ?>;"
+                                                            style="background-color: <?php echo htmlspecialchars($cat['color'], ENT_QUOTES, 'UTF-8'); ?>;"
                                                             onclick="togglePalette(<?php echo $cat['id']; ?>, event)">
                                                         </div>
                                                         <div class="color-palette-popup"
@@ -1198,6 +1264,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                             style="display:none;">
                                                             <input type="hidden" name="action"
                                                                 value="update_category_color">
+                                                            <input type="hidden" name="csrf_token"
+                                                                value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                                             <input type="hidden" name="category_id"
                                                                 value="<?php echo $cat['id']; ?>">
                                                             <input type="hidden" name="color"
@@ -1214,6 +1282,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                                         data-confirm-alt-target="delete_mode"
                                                         data-confirm-alt-value="detach" data-preserve-scroll>
                                                         <input type="hidden" name="action" value="delete_category">
+                                                        <input type="hidden" name="csrf_token"
+                                                            value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                                         <input type="hidden" name="category_id"
                                                             value="<?php echo $cat['id']; ?>">
                                                         <input type="hidden" name="delete_mode" value="delete_all">
@@ -1249,6 +1319,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
             </div>
             <form method="post" class="task-note-form" data-task-note-form>
                 <input type="hidden" name="action" value="update_task_notes">
+                <input type="hidden" name="csrf_token"
+                    value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                 <input type="hidden" name="task_id" value="" data-task-note-id>
                 <input type="hidden" name="ajax" value="1">
                 <label class="input-group">
