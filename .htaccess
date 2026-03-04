@@ -1,7 +1,7 @@
 # === 1. 防止目錄瀏覽 ===
 Options -Indexes
 
-# === 2. 保護敏感檔案 (使用現代 Apache 2.4 語法) ===
+# === 2. 保護敏感檔案  ===
 <FilesMatch "^\.env|composer\.(json|lock)|.*\.sql$|README.*\.md$">
     <IfModule mod_authz_core.c>
         Require all denied
@@ -17,13 +17,12 @@ RewriteEngine On
 RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-# === 4. 隱藏 .php 後綴 (讓網址更美) ===
-# 例如：讓 /todo 也能跑 todo.php
+# === 4. 隱藏 .php 後綴 ===
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteCond %{REQUEST_FILENAME}\.php -f
 RewriteRule ^(.*)$ $1.php [L]
 
-# === 5. Gzip 壓縮與快取 (維持你的設定，很好！) ===
+# === 5. Gzip 壓縮與快取 ===
 <IfModule mod_deflate.c>
     AddOutputFilterByType DEFLATE text/html text/css text/javascript application/javascript application/json
 </IfModule>
@@ -40,5 +39,4 @@ RewriteRule ^(.*)$ $1.php [L]
 </IfModule>
 
 # === 6. 錯誤頁面 ===
-# 注意：確保路徑正確，如果是根目錄就用 /index.php
 ErrorDocument 404 /index.php
