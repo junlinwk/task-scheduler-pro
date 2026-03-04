@@ -54,6 +54,37 @@ function respond_json($ok, $message, $extra = []) {
     exit;
 }
 
+function sanitize_mail_header_value($value, $maxLen = 180) {
+    return sanitize_single_line($value, $maxLen);
+}
+
+if ($isPost) {
+    if (!is_logged_in()) {
+        respond_json(false, 'Authentication required.');
+    }
+    if (!is_valid_csrf_token($_POST['csrf_token'] ?? '')) {
+        respond_json(false, 'Invalid request token.');
+    }
+    if (rate_limit_is_blocked('send_tasks_email', 8, 300)) {
+        $retryAfter = rate_limit_retry_after('send_tasks_email', 300);
+        respond_json(false, 'Too many requests. Retry in ' . max(1, $retryAfter) . 's.');
+    }
+
+    $recipient = sanitize_single_line($_POST['email'] ?? '', 255);
+    $userId = (int)current_user_id();
+    if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+        respond_json(false, 'Invalid email.');
+    }
+    rate_limit_register_hit('send_tasks_email', 300);
+} else {
+    $recipient = sanitize_single_line(env('RECIPIENT_EMAIL', 'you@example.com'), 255);
+    $userId = (int)env('USER_ID', 1);
+    if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+        echo "Invalid RECIPIENT_EMAIL.\n";
+        exit(1);
+    }
+}
+
 // Pull all incomplete tasks (including those without deadlines)
 // Priority: overdue > today > no deadline > future
 $stmt = $mysqli->prepare('
