@@ -4,8 +4,10 @@
 //   RECIPIENT_EMAIL=you@example.com USER_ID=1 php send_tasks_email.php
 // Usage (HTTP POST for AJAX):
 //   email, topic (optional), ajax=1
+//   email, topic (optional), ajax=1
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/auth.php';
 
 // PHPMailer (if installed via composer)
@@ -52,8 +54,22 @@ function respond_json($ok, $message, $extra = []) {
     exit;
 }
 
-// Pull today's tasks: not done and deadline == today
-$stmt = $mysqli->prepare('SELECT id, title, deadline, notes, is_done FROM tasks WHERE user_id = ? AND is_done = 0 AND deadline = CURDATE() ORDER BY deadline ASC');
+// Pull all incomplete tasks (including those without deadlines)
+// Priority: overdue > today > no deadline > future
+$stmt = $mysqli->prepare('
+    SELECT id, title, deadline, notes, is_done 
+    FROM tasks 
+    WHERE user_id = ? 
+      AND is_done = 0
+    ORDER BY 
+      CASE 
+        WHEN deadline IS NULL THEN 3
+        WHEN deadline < CURDATE() THEN 1
+        WHEN deadline = CURDATE() THEN 2
+        ELSE 4
+      END,
+      deadline ASC
+');
 $stmt->bind_param('i', $userId);
 $stmt->execute();
 $res = $stmt->get_result();
@@ -193,7 +209,7 @@ $html = <<<HTML
                                             <td style="vertical-align:middle;">
                                                 <table role="presentation" cellpadding="0" cellspacing="0">
                                                     <tr>
-                                                        <td style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#5c6cff,#ff8fb1);text-align:center;color:white;font-weight:800;font-size:18px;">✔</td>
+                                                        <td style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,#5c6cff,#ff8fb1);text-align:center;color:white;font-weight:800;font-size:18px;">&#x2714;</td>
                                                         <td style="width:10px;"></td>
                                                         <td style="vertical-align:middle;">
                                                             <div style="font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:#cbd5e1;font-weight:700;">Daily Notification</div>
@@ -245,7 +261,17 @@ $subject = sanitize_mail_header_value($subjectInput, 160);
 if ($subject === '') {
     $subject = 'Tasks for today - ' . date('Y-m-d');
 }
+$subjectInput = $isPost ? ($_POST['topic'] ?? '') : '';
+$subject = sanitize_mail_header_value($subjectInput, 160);
+if ($subject === '') {
+    $subject = 'Tasks for today - ' . date('Y-m-d');
+}
 
+$fromEmail = sanitize_single_line(env('SMTP_FROM', 'noreply@todo.example.com'), 255);
+if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
+    $fromEmail = 'noreply@todo.example.com';
+}
+$fromName = sanitize_mail_header_value(env('SMTP_FROM_NAME', 'TODO Scheduler'), 120);
 $fromEmail = sanitize_single_line(env('SMTP_FROM', 'noreply@todo.example.com'), 255);
 if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
     $fromEmail = 'noreply@todo.example.com';
@@ -257,10 +283,15 @@ $smtpUser = env('SMTP_USER', '');
 $smtpPass = env('SMTP_PASS', '');
 $smtpSecureRaw = strtolower((string)env('SMTP_SECURE', 'tls'));
 $smtpSecure = in_array($smtpSecureRaw, ['tls', 'ssl', ''], true) ? $smtpSecureRaw : 'tls'; // tls, ssl, or '' for none
+$smtpSecureRaw = strtolower((string)env('SMTP_SECURE', 'tls'));
+$smtpSecure = in_array($smtpSecureRaw, ['tls', 'ssl', ''], true) ? $smtpSecureRaw : 'tls'; // tls, ssl, or '' for none
 $smtpTimeout = (int)env('SMTP_TIMEOUT', 20); // socket timeout in seconds
 $useSmtp = !empty($smtpHost);
 // debug level for PHPMailer SMTP (0 = off, 1..4 levels). Controlled by SMTP_DEBUG env.
 $smtpDebug = (int)env('SMTP_DEBUG', 0);
+if (!$isCli) {
+    $smtpDebug = 0;
+}
 if (!$isCli) {
     $smtpDebug = 0;
 }
@@ -361,6 +392,9 @@ if (!$sent) {
 }
 
 if ($sent) {
+    if ($isPost) {
+        rate_limit_clear('send_tasks_email');
+    }
     if ($isPost) {
         rate_limit_clear('send_tasks_email');
     }
