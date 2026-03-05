@@ -304,7 +304,12 @@ function initSettingsOverlay() {
                 return true;
             } else {
                 if (!silent) {
-                    showNoteToast(message || 'Unable to send email.', true);
+                    if (message && message.includes('Invalid request token')) {
+                        showNoteToast('Session expired. Reloading...', true);
+                        setTimeout(() => window.location.reload(), 1500);
+                    } else {
+                        showNoteToast(message || 'Unable to send email.', true);
+                    }
                 }
                 return false;
             }

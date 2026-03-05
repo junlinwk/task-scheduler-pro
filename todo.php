@@ -867,7 +867,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
                                         value="<?php echo htmlspecialchars($csrf_token, ENT_QUOTES, 'UTF-8'); ?>">
                                     <label class="input-group">
                                         <span>Task name</span>
-                                        <input type="text" name="title" placeholder="e.g. Submit Scheduler report" required>
+                                        <input type="text" name="title" placeholder="e.g. Submit Scheduler report"
+                                            required>
                                     </label>
                                     <label class="input-group">
                                         <span>Deadline</span>
