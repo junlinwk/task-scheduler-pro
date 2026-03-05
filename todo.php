@@ -630,8 +630,8 @@ $plan_tasks_json = htmlspecialchars(json_encode($plan_tasks_data), ENT_QUOTES, '
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TODO Tasks Scheduler</title>
-    <link rel="stylesheet" href="assets/style.css">
-    <script src="assets/script.js" defer></script>
+    <link rel="stylesheet" href="assets/style.css?v=<?php echo time(); ?>">
+    <script src="assets/script.js?v=<?php echo time(); ?>" defer></script>
 </head>
 
 <body class="app-body" data-user-id="<?php echo htmlspecialchars($user_id, ENT_QUOTES, 'UTF-8'); ?>"
